@@ -1,0 +1,48 @@
+facebook:
+  label: Facebook
+  permalink: /facebook
+  description: Facebook tag description
+
+hello:
+  label: Hello
+  permalink: /hello
+  description: Hello tag description
+
+docusaurus:
+  label: Docusaurus
+  permalink: /docusaurus
+  description: Docusaurus tag description
+
+hola:
+  label: Hola
+  permalink: /hola
+
+robotics:
+  label: Robotics
+  permalink: /robotics
+  description: Robotics tag description
+
+ai:
+  label: AI
+  permalink: /ai
+  description: Artificial Intelligence tag description
+
+vision:
+  label: Vision
+  permalink: /vision
+  description: Computer Vision tag description
+
+future:
+  label: Future
+  permalink: /future
+  description: Future Tech tag description
+
+education:
+  label: Education
+  permalink: /education
+  description: Education tag description
+
+engineering:
+  label: Engineering
+  permalink: /engineering
+  description: Engineering tag description

@@ -1,0 +1,10 @@
+python-dotenv
+langchain-text-splitters
+qdrant-client
+cohere
+google-generativeai
+openai
+langchain-community
+fastapi
+uvicorn
+httpx

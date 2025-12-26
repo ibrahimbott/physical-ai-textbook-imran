@@ -1,0 +1,47 @@
+{
+    "version": 2,
+    "builds": [
+        {
+            "src": "frontend-book/package.json",
+            "use": "@vercel/static-build",
+            "config": {
+                "distDir": "build"
+            }
+        },
+        {
+            "src": "api/index.py",
+            "use": "@vercel/python"
+        }
+    ],
+    "routes": [
+        {
+            "src": "/api/chat",
+            "dest": "/api/index.py",
+            "methods": [
+                "GET",
+                "POST",
+                "OPTIONS"
+            ]
+        },
+        {
+            "src": "/api/(.*)",
+            "dest": "/api/index.py",
+            "methods": [
+                "GET",
+                "POST",
+                "OPTIONS",
+                "PUT",
+                "DELETE",
+                "PATCH"
+            ]
+        },
+        {
+            "src": "/(.*)",
+            "dest": "/frontend-book/$1"
+        }
+    ],
+    "env": {
+        "PYTHON_VERSION": "3.9",
+        "NODE_OPTIONS": "--max-old-space-size=6144"
+    }
+}

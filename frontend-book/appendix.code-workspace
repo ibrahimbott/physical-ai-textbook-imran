@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"name": "appendix",
+			"path": "../../hackathon-physical-ai-humanoid-textbook/docusaurus_textbook/docs/appendix"
+		},
+		{
+			"name": "Physical-TextBook",
+			"path": ".."
+		}
+	],
+	"settings": {}
+}

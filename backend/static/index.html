@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Physical AI Tutor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo-container">
+                    <i class="fa-solid fa-robot logo-icon"></i>
+                </div>
+                <h1>Physical AI <span class="subtitle">Tutor</span></h1>
+            </div>
+
+            <div class="sidebar-content">
+                <div class="new-chat-btn" onclick="startNewChat()">
+                    <i class="fa-solid fa-plus"></i> New Chat
+                </div>
+
+                <div class="history-section">
+                    <h3>Recent Conversations</h3>
+                    <div class="history-list" id="historyList">
+                        <!-- History items will be added here -->
+                        <div class="history-item active">
+                            <i class="fa-regular fa-message"></i>
+                            <span>Introduction to ROS 2</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar-footer">
+                <div class="user-profile">
+                    <div class="avatar">
+                        <i class="fa-solid fa-user"></i>
+                    </div>
+                    <div class="user-info">
+                        <span class="name">Student</span>
+                        <span class="status">Online</span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Chat Area -->
+        <main class="chat-area">
+            <header class="chat-header">
+                <div class="mobile-menu-btn">
+                    <i class="fa-solid fa-bars"></i>
+                </div>
+                <div class="header-info">
+                    <h2>AI Assistant</h2>
+                    <span class="model-badge">
+                        <i class="fa-solid fa-bolt"></i> Gemini Flash
+                    </span>
+                </div>
+                <div class="header-actions">
+                    <button class="icon-btn" title="Clear Chat" onclick="clearChat()">
+                        <i class="fa-regular fa-trash-can"></i>
+                    </button>
+                    <button class="icon-btn" title="Settings">
+                        <i class="fa-solid fa-gear"></i>
+                    </button>
+                </div>
+            </header>
+
+            <div class="messages-container" id="messagesContainer">
+                <div class="welcome-screen">
+                    <div class="welcome-icon">
+                        <i class="fa-solid fa-book-open-reader"></i>
+                    </div>
+                    <h2>How can I help you learn?</h2>
+                    <p>Ask me anything about the Physical AI & Humanoid Robotics textbook.</p>
+
+                    <div class="suggestions">
+                        <div class="suggestion-card" onclick="sendSuggestion('What is Physical AI?')">
+                            <i class="fa-solid fa-network-wired"></i>
+                            <span>What is Physical AI?</span>
+                        </div>
+                        <div class="suggestion-card" onclick="sendSuggestion('Explain ROS 2 nodes')">
+                            <i class="fa-brands fa-linux"></i>
+                            <span>Explain ROS 2 nodes</span>
+                        </div>
+                        <div class="suggestion-card" onclick="sendSuggestion('How do VLA models work?')">
+                            <i class="fa-solid fa-brain"></i>
+                            <span>How do VLA models work?</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="input-area">
+                <div class="input-wrapper">
+                    <textarea id="messageInput" placeholder="Ask a question about the course..." rows="1"
+                        oninput="autoResize(this)" onkeydown="handleKeyDown(event)"></textarea>
+                    <button id="sendBtn" onclick="sendMessage()">
+                        <div class="svg-wrapper-1">
+                            <div class="svg-wrapper">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+                                    <path fill="none" d="M0 0h24v24H0z"></path>
+                                    <path fill="currentColor"
+                                        d="M1.946 9.315c-.522-.174-.527-.455.01-.634l19.087-6.362c.529-.176.832.12.684.638l-5.454 19.086c-.15.529-.455.547-.679.045L12 14l6-8-8 6-8.054-2.685z">
+                                    </path>
+                                </svg>
+                            </div>
+                        </div>
+                    </button>
+                </div>
+                <div class="input-footer">
+                    <span>AI can make mistakes. Please check the textbook.</span>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+
+</html>
