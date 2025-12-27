@@ -1,10 +1,12 @@
 import sys
 import os
 
-# Add the parent directory/backend to sys.path so we can import modules
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Create a robust path to the project root
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+sys.path.append(project_root)
 
-from backend.rag_system import app
+# Import the FastAPI instance
+from backend.main import app
 
-# Vercel needs the object named 'app' available at the module level
-
+# This 'app' object is what Vercel needs to see
