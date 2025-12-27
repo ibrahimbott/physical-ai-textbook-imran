@@ -1,5 +1,11 @@
 {
     "version": 2,
+    "functions": {
+        "api/index.py": {
+            "maxDuration": 60,
+            "includeFiles": "frontend-book/docs/**/*"
+        }
+    },
     "rewrites": [
         {
             "source": "/api/chat",
@@ -7,6 +13,10 @@
         },
         {
             "source": "/api/:path*",
+            "destination": "/api/index.py"
+        },
+        {
+            "source": "/chat",
             "destination": "/api/index.py"
         },
         {
@@ -26,8 +36,5 @@
             "src": "api/index.py",
             "use": "@vercel/python"
         }
-    ],
-    "env": {
-        "PYTHON_VERSION": "3.9"
-    }
+    ]
 }
