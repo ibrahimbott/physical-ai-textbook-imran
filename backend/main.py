@@ -74,8 +74,7 @@ def search_qdrant(query_embedding, top_k=3):
             print(f"LOG: Collection '{COLLECTION_NAME}' not found in Qdrant.")
             return []
 
-        # 2. Execute Search (Try 'query_points' then 'search')
-        # User requested 'query_points' specifically due to attribute error
+        # 2. Execute Search using query_points (Modern Method)
         try:
             results = qdrant_client.query_points(
                 collection_name=COLLECTION_NAME,
@@ -83,15 +82,26 @@ def search_qdrant(query_embedding, top_k=3):
                 limit=top_k
             ).points
         except AttributeError:
-             # Fallback to .search() if query_points fails (older client)
-             results = qdrant_client.search(
-                collection_name=COLLECTION_NAME,
-                query_vector=query_embedding,
-                limit=top_k
-            )
+             print("LOG: 'query_points' method missing. Trying .search()...")
+             # Fallback for older clients
+             try:
+                results = qdrant_client.search(
+                    collection_name=COLLECTION_NAME,
+                    query_vector=query_embedding,
+                    limit=top_k
+                )
+             except AttributeError:
+                return ["Search Error: Client version mismatch. Neither 'query_points' nor 'search' found."]
 
         # Extract textual content from payload
-        return [res.payload.get("page_content", "") for res in results if res.payload]
+        extracted_chunks = []
+        for res in results:
+            if hasattr(res, 'payload') and res.payload:
+                content = res.payload.get("page_content", "") or res.payload.get("text", "")
+                if content:
+                    extracted_chunks.append(content)
+        
+        return extracted_chunks
 
     except Exception as e:
         print(f"LOG: Search Error: {e}")
