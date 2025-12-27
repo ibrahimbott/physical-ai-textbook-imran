@@ -108,14 +108,16 @@ async def chat_endpoint(request: ChatRequest):
     else:
         print("LOG: Embedding generation failed. Context will be empty.")
 
-    # 2. Strict Context System Prompt
+    # 1.5. Log Collection Name (Debug)
+    print(f"LOG: Querying Collection: {COLLECTION_NAME}")
+
+    # 2. Smart Context System Prompt (Relaxed for Greetings)
     system_instruction = (
         "You are an AI Tutor for the 'Physical AI & Humanoid Robotics' textbook. "
-        "Strictly answer the user's question based ONLY on the provided Context below. "
-        "If the answer is not in the context, explicitly say 'I don't have information about that in the textbook.' "
-        "Do not hallucinate or use outside knowledge. "
-        "Be concise with greetings. "
-        "Provide detailed technical explanations only when the context supports it."
+        "1. **Greetings**: If the user says 'Hi', 'Hello', or 'Thanks', reply politely and ask how you can help with the textbook. "
+        "2. **Strict Context**: For technical questions, answer ONLY based on the provided Context below. "
+        "3. **Missing Info**: If the answer is NOT in the context, say 'I couldn't find that specific topic in the textbook. Could you rephrase or ask about [Topic]?' "
+        "4. **Tone**: Be helpful, professional, and encouraging."
     )
     
     final_prompt = f"""{system_instruction}
