@@ -74,11 +74,13 @@ async def chat_endpoint(request: ChatRequest):
             }
         }
         
-        # STRATEGY: Compatibility Mode.
-        # Status 400 (Bad Request) means the API didn't like 'systemInstruction' on the v1 endpoint.
-        # FIX: We merge the system prompt INTO the user message. This works on ALL versions (v1, v1beta).
+        # STRATEGY: "Try Everything" with Clean Payload.
+        # 1. 2.0 Flash Exp (Returned 429 before -> It exists!)
+        # 2. 1.5 Flash 8b (New, often less busy)
+        # 3. 1.5 Flash (Standard)
+        # 4. Pro (Legacy)
         
-        # 1. Merge System Prompt into User Message
+        # 1. Merge System Prompt (Safe for all versions)
         final_prompt = f"""{system_instruction}
         
         Context:
@@ -88,7 +90,6 @@ async def chat_endpoint(request: ChatRequest):
         {request.message}
         """
 
-        # 2. Simplified Payload (No 'systemInstruction' field)
         payload = {
             "contents": [{
                 "role": "user",
@@ -96,34 +97,52 @@ async def chat_endpoint(request: ChatRequest):
             }]
         }
         
-        async with httpx.AsyncClient() as client:
-             # Try 1.5 Flash on v1beta (Standard)
-             # We went back to v1beta because 400 on v1 proves v1 was reached but rejected the payload.
-             # With the simplified payload, v1beta is the best bet for Flash.
-             url_flash = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
-             
-             try:
-                response = await client.post(url_flash, json=payload, timeout=30.0)
-                if response.status_code == 200:
-                    data = response.json()
-                    if "candidates" in data and data["candidates"]:
-                            answer = data["candidates"][0]["content"]["parts"][0]["text"]
-                            return {"response": answer}
-                
-                # Fallback: Gemini Pro on v1 (The ultimate fallback)
-                print(f"LOG: Flash failed ({response.status_code}). Switching to Gemini Pro (v1)...")
-                url_pro = f"https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={API_KEY}"
-                response_pro = await client.post(url_pro, json=payload, timeout=30.0)
-                
-                if response_pro.status_code == 200:
-                    data = response_pro.json()
-                    if "candidates" in data and data["candidates"]:
-                        answer = data["candidates"][0]["content"]["parts"][0]["text"]
-                        return {"response": answer}
+        # List of (Model, Version) to try
+        candidates = [
+            ("gemini-2.0-flash-exp", "v1beta"), # 429 before = FOUND
+            ("gemini-1.5-flash-8b", "v1beta"),  # New lightweight
+            ("gemini-1.5-flash", "v1beta"),     # Standard
+            ("gemini-pro", "v1beta")            # Legacy
+        ]
 
-                return {"response": f"Error: Flash and Pro failed. Flash Status: {response.status_code}. Pro Status: {response_pro.status_code}. Key: {API_KEY[:4]}..."}
-             except Exception as e:
-                return {"response": f"Connection Error: {e}"}
+        async with httpx.AsyncClient() as client:
+             import asyncio
+             logs = []
+             
+             for model, version in candidates:
+                url = f"https://generativelanguage.googleapis.com/{version}/models/{model}:generateContent?key={API_KEY}"
+                
+                # Retry loop only for this model
+                for attempt in range(2): 
+                    try:
+                        response = await client.post(url, json=payload, timeout=30.0)
+                        
+                        if response.status_code == 200:
+                            data = response.json()
+                            if "candidates" in data and data["candidates"]:
+                                    answer = data["candidates"][0]["content"]["parts"][0]["text"]
+                                    return {"response": answer}
+                        
+                        # If 429, wait and retry (only for this model)
+                        if response.status_code == 429:
+                            if attempt == 0: # Only wait once per model
+                                await asyncio.sleep(1.5)
+                                continue
+                            else:
+                                logs.append(f"{model}: 429 (Busy)")
+                        
+                        elif response.status_code == 404:
+                            logs.append(f"{model}: 404 (Not Found)")
+                            break # Don't retry 404
+                        else:
+                             logs.append(f"{model}: {response.status_code}")
+                             break 
+                             
+                    except Exception as e:
+                        logs.append(f"{model}: Error")
+                        break
+             
+             return {"response": f"Error: All models failed. Debug: {', '.join(logs)}. Key: {API_KEY[:4]}..."}
 
     except Exception as e:
         print(f"Server Error: {e}")
