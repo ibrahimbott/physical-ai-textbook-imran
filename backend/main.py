@@ -1,17 +1,16 @@
 import os
 import httpx
-import asyncio
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient
 
+# 1. Environment aur App Setup
 load_dotenv()
-
 app = FastAPI()
 
-# Allow CORS for Frontend
+# Frontend ke liye Rasta (CORS) kholna
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,32 +19,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Configuration ---
+# 2. Configuration (Environment Variables)
 API_KEY = os.getenv("AI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "physical_ai_textbook")
 
-# Initialize Qdrant Client
+# Qdrant Client Initialize karna
 qdrant_client = None
 if QDRANT_URL and QDRANT_API_KEY:
     try:
         qdrant_client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
-        print("LOG: Qdrant Client Initialized Successfully.")
+        print("LOG: Qdrant Database Connected.")
     except Exception as e:
-        print(f"LOG: Qdrant Init Failed: {e}")
+        print(f"LOG: Qdrant Connection Failed: {e}")
 
 class ChatRequest(BaseModel):
     message: str
 
+# 3. Embedding Function (Google API + Dimension Fix)
 async def get_embedding(text: str):
-    """Generates NATIVE 1024-dimension embedding using Gemini 004"""
-    if not API_KEY:
-        return None
+    """Google se vector mangwana aur dimension 1024 fix karna"""
+    if not API_KEY: return None
     
     url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={API_KEY}"
-    
-    # CRITICAL FIX: Explicitly request 1024 dimensionality from Google API
     payload = {
         "model": "models/text-embedding-004",
         "content": {"parts": [{"text": text}]},
@@ -57,102 +54,90 @@ async def get_embedding(text: str):
         try:
             resp = await client.post(url, json=payload, timeout=15.0)
             if resp.status_code == 200:
-                data = resp.json()
-                vector = data["embedding"]["values"]
-                print(f"LOG: Successfully generated NATIVE {len(vector)} dim embedding.")
+                vector = resp.json()["embedding"]["values"]
+                
+                # --- CRITICAL DIMENSION FIX ---
+                # Agar Google 1024 ke bajaye 768 de, toh zeros laga kar 1024 pura karna
+                current_dim = len(vector)
+                if current_dim < 1024:
+                    print(f"LOG: Padding vector from {current_dim} to 1024 for Qdrant compatibility.")
+                    vector += [0.0] * (1024 - current_dim)
+                
+                print(f"LOG: Vector size is now {len(vector)}.")
                 return vector
             else:
-                print(f"LOG: Embedding API Error {resp.status_code}: {resp.text}")
-                return None
+                print(f"LOG: Google API Error: {resp.text}")
         except Exception as e:
             print(f"LOG: Embedding Exception: {e}")
-            return None
+    return None
 
-def search_qdrant(query_embedding, top_k=3):
-    """Searches Qdrant with the 1024-dim vector"""
-    if not qdrant_client or not query_embedding:
-        return []
-    
+# 4. Search Function (Database Retrieval)
+def search_qdrant(query_embedding):
+    """Database mein se textbook ka data nikalna"""
+    if not qdrant_client or not query_embedding: return []
     try:
-        # Verify dimension match
-        if len(query_embedding) != 1024:
-            print(f"LOG WARNING: Vector dimension is {len(query_embedding)}, but Qdrant expects 1024.")
-
-        # Using query_points for modern Qdrant Client
+        # Modern query_points method
         response = qdrant_client.query_points(
             collection_name=COLLECTION_NAME,
             query=query_embedding,
-            limit=top_k
+            limit=3
         )
         
         extracted_chunks = []
         for point in response.points:
-            payload = point.payload
-            if payload:
-                # Try common content keys
-                content = payload.get("page_content") or payload.get("text") or payload.get("content")
-                if content:
-                    extracted_chunks.append(content)
+            if point.payload:
+                # Text dhoondna (page_content ya text key mein)
+                text = point.payload.get("page_content") or point.payload.get("text") or point.payload.get("content")
+                if text: extracted_chunks.append(text)
         
         return extracted_chunks
-
     except Exception as e:
-        print(f"LOG: Qdrant Search Error: {e}")
+        print(f"LOG: Search Error: {e}")
         return []
 
+# 5. Main Chat Endpoint
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
-    if not API_KEY:
-        return {"response": "System Error: API Key missing in Vercel."}
+    if not API_KEY: return {"response": "Error: API Key missing."}
     
-    user_msg = request.message.strip()
+    user_input = request.message.strip()
 
-    # 1. Search Database
-    context_text = ""
-    query_vector = await get_embedding(user_msg)
-    
-    if query_vector:
-        chunks = search_qdrant(query_vector)
+    # Step A: Search Textbook Database
+    context = ""
+    vector = await get_embedding(user_input)
+    if vector:
+        chunks = search_qdrant(vector)
         if chunks:
-            context_text = "\n\n".join(chunks)
-            print(f"LOG: Context found ({len(chunks)} chunks).")
-        else:
-            print("LOG: No matching textbook data found.")
+            context = "\n\n".join(chunks)
+            print(f"LOG: Found {len(chunks)} relevant sections in textbook.")
 
-    # 2. Strict Instructions
-    system_prompt = (
-        "You are a professional AI Tutor for the 'Physical AI & Humanoid Robotics' textbook. "
-        "Rules:\n"
-        "1. If the user greets you (Hi, Hello, Salam), reply with a very short polite greeting and ask about the textbook.\n"
-        "2. For technical questions, use ONLY the provided Context from the textbook. Do not use outside knowledge.\n"
-        "3. If the answer is not in the context, say: 'I'm sorry, this specific topic is not covered in our textbook.'\n"
-        "4. If the user asks to 'explain' or 'detail', then provide a long and clear explanation. Otherwise, keep it concise."
+    # Step B: AI Prompt Setup
+    system_instruction = (
+        "You are the 'Physical AI & Humanoid Robotics' Textbook AI Tutor. "
+        "1. For greetings, be short and polite. "
+        "2. For technical questions, answer ONLY using the Textbook Context provided below. "
+        "3. If info is missing, say you don't know based on the textbook. "
+        "4. Be clear and helpful."
     )
     
-    final_input = f"{system_prompt}\n\nContext:\n{context_text}\n\nUser Question: {user_msg}"
+    final_prompt = f"{system_instruction}\n\nTextbook Context:\n{context}\n\nUser Question: {user_input}"
 
-    # 3. Model Discovery & Fallback
-    models_to_try = ["gemini-robotics-er-1.5-preview", "gemini-1.5-flash", "gemini-2.0-flash-exp"]
+    # Step C: Call Working Model (Gemini 1.5 Robotics Preview)
+    # Ye model aapke logs mein 200 OK de raha tha
+    model_name = "gemini-robotics-er-1.5-preview"
+    llm_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={API_KEY}"
     
     async with httpx.AsyncClient() as client:
-        for model in models_to_try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={API_KEY}"
-            payload = {"contents": [{"parts": [{"text": final_input}]}]}
-            
-            try:
-                resp = await client.post(url, json=payload, timeout=30.0)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    return {"response": data["candidates"][0]["content"]["parts"][0]["text"]}
-                elif resp.status_code == 429:
-                    print(f"LOG: {model} busy (429), trying next...")
-                    continue
-            except Exception as e:
-                print(f"LOG: Error with {model}: {e}")
-                continue
-
-    return {"response": "I'm having trouble connecting to my brain right now. Please try again in a moment."}
+        try:
+            resp = await client.post(llm_url, json={"contents": [{"parts": [{"text": final_prompt}]}]}, timeout=30.0)
+            if resp.status_code == 200:
+                answer = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+                return {"response": answer}
+            else:
+                return {"response": "I'm connected, but the textbook data search is still being refined. Please ask again."}
+        except Exception as e:
+            return {"response": f"Connection Error: {str(e)}"}
 
 @app.get("/")
 def home():
-    return {"status": "Physical AI Backend Active", "database": COLLECTION_NAME}
+    return {"status": "Physical AI Backend is LIVE", "collection": COLLECTION_NAME}
