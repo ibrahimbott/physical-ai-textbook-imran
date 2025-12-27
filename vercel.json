@@ -18,10 +18,17 @@
             "destination": "/frontend-book/$1"
         }
     ],
-    "functions": {
-        "api/*.py": {
-            "maxDuration": 60,
-            "includeFiles": "frontend-book/docs/**/*"
+    "builds": [
+        {
+            "src": "frontend-book/package.json",
+            "use": "@vercel/static-build",
+            "config": {
+                "distDir": "build"
+            }
+        },
+        {
+            "src": "api/index.py",
+            "use": "@vercel/python"
         }
-    }
+    ]
 }
