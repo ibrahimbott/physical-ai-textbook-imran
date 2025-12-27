@@ -20,7 +20,8 @@ app.add_middleware(
 )
 
 # Configuration
-API_KEY = os.getenv("AI_API_KEY")
+# Check for AI_API_KEY (Standard) or GOOGLE_API_KEY (User Preference)
+API_KEY = os.getenv("AI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
 
 class ChatRequest(BaseModel):
@@ -39,7 +40,12 @@ def health_check():
 @app.post("/") # Catch-all for stripped paths
 async def chat_endpoint(request: ChatRequest):
     if not API_KEY:
-        return {"response": "Error: AI_API_KEY is missing in Vercel Environment Variables. Please add it in Settings."}
+        print("LOG: API Key is MISSING.")
+        return {"response": "Error: API Key missing. Please set 'AI_API_KEY' or 'GOOGLE_API_KEY' in Vercel."}
+    
+    # Safe logging
+    masked_key = f"{API_KEY[:4]}...{API_KEY[-4:]}" if len(API_KEY) > 8 else "INVALID"
+    print(f"LOG: API Key found: {masked_key}. Proceeding to Gemini.")
 
     try:
         # 1. Search Textbook
