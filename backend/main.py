@@ -74,13 +74,15 @@ async def chat_endpoint(request: ChatRequest):
             }
         }
         
-        # STRATEGY: "Try Everything" with Clean Payload.
-        # 1. 2.0 Flash Exp (Returned 429 before -> It exists!)
-        # 2. 1.5 Flash 8b (New, often less busy)
-        # 3. 1.5 Flash (Standard)
-        # 4. Pro (Legacy)
+        # STRATEGY: "The Survivor".
+        # Debug logs prove ONLY `gemini-2.0-flash-exp` exists for this key (others are 404).
+        # But it returns 429 (Busy).
+        # FIX: We target ONLY 2.0 Flash Exp and retry aggressively with backoff.
         
-        # 1. Merge System Prompt (Safe for all versions)
+        target_model = "gemini-2.0-flash-exp"
+        model_url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={API_KEY}"
+        
+        # 1. Safe Payload (Merged System Prompt)
         final_prompt = f"""{system_instruction}
         
         Context:
@@ -97,52 +99,34 @@ async def chat_endpoint(request: ChatRequest):
             }]
         }
         
-        # List of (Model, Version) to try
-        candidates = [
-            ("gemini-2.0-flash-exp", "v1beta"), # 429 before = FOUND
-            ("gemini-1.5-flash-8b", "v1beta"),  # New lightweight
-            ("gemini-1.5-flash", "v1beta"),     # Standard
-            ("gemini-pro", "v1beta")            # Legacy
-        ]
-
         async with httpx.AsyncClient() as client:
              import asyncio
-             logs = []
-             
-             for model, version in candidates:
-                url = f"https://generativelanguage.googleapis.com/{version}/models/{model}:generateContent?key={API_KEY}"
-                
-                # Retry loop only for this model
-                for attempt in range(2): 
-                    try:
-                        response = await client.post(url, json=payload, timeout=30.0)
-                        
-                        if response.status_code == 200:
-                            data = response.json()
-                            if "candidates" in data and data["candidates"]:
-                                    answer = data["candidates"][0]["content"]["parts"][0]["text"]
-                                    return {"response": answer}
-                        
-                        # If 429, wait and retry (only for this model)
-                        if response.status_code == 429:
-                            if attempt == 0: # Only wait once per model
-                                await asyncio.sleep(1.5)
-                                continue
-                            else:
-                                logs.append(f"{model}: 429 (Busy)")
-                        
-                        elif response.status_code == 404:
-                            logs.append(f"{model}: 404 (Not Found)")
-                            break # Don't retry 404
-                        else:
-                             logs.append(f"{model}: {response.status_code}")
-                             break 
+             # Retry up to 5 times (approx 30s total wait)
+             for attempt in range(5): 
+                try:
+                    response = await client.post(model_url, json=payload, timeout=40.0)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        if "candidates" in data and data["candidates"]:
+                                answer = data["candidates"][0]["content"]["parts"][0]["text"]
+                                return {"response": answer}
+                    
+                    if response.status_code == 429:
+                        wait_time = (attempt + 1) * 2 # 2s, 4s, 6s, 8s, 10s
+                        print(f"LOG: 429 Busy. Retrying in {wait_time}s...")
+                        await asyncio.sleep(wait_time)
+                        continue
+                    
+                    # If 404 or other hard error, break
+                    return {"response": f"Error: Model {target_model} failed with {response.status_code}. Key: {API_KEY[:4]}..."}
                              
-                    except Exception as e:
-                        logs.append(f"{model}: Error")
-                        break
+                except Exception as e:
+                    print(f"LOG: Connection Error on attempt {attempt}: {e}")
+                    await asyncio.sleep(1)
+                    continue
              
-             return {"response": f"Error: All models failed. Debug: {', '.join(logs)}. Key: {API_KEY[:4]}..."}
+             return {"response": "Error: Google Gemini 2.0 is currently overloaded (Rate Limit). Please try again in 1 minute."}
 
     except Exception as e:
         print(f"Server Error: {e}")
