@@ -3,6 +3,7 @@ fastapi
 uvicorn
 python-dotenv
 httpx
+google-generativeai
 
 # RAG / AI Dependencies (Uncomment only if size allows or using Docker)
 # langchain-text-splitters
