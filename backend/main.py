@@ -74,21 +74,19 @@ async def chat_endpoint(request: ChatRequest):
             }
         }
         
-        # Models to try (Prioritizing User Request: Gemini 2.0 Flash)
-        # Structure: (model_name, api_version)
+        # Models to try - prioritizing Flash as requested (mapping "2.5" request to actual available Flash models)
         model_candidates = [
-            ("gemini-2.0-flash-exp", "v1beta"), # Latest Experimental
             ("gemini-1.5-flash", "v1beta"),
             ("gemini-1.5-flash-latest", "v1beta"),
-            ("gemini-pro", "v1beta"),
-            ("gemini-pro", "v1"), # Stable v1 endpoint
+            ("gemini-2.0-flash-exp", "v1beta"), # 2.0 Flash Experimental
+            ("gemini-1.5-flash", "v1"),         # Stable v1
         ]
 
         async with httpx.AsyncClient() as client:
+            error_logs = []
             for model, version in model_candidates:
                 url = f"https://generativelanguage.googleapis.com/{version}/models/{model}:generateContent?key={API_KEY}"
                 try:
-                    # v1 endpoint uses 'contents' just like v1beta usually, but let's be safe
                     response = await client.post(url, json=payload, timeout=30.0)
                     
                     if response.status_code == 200:
@@ -96,23 +94,17 @@ async def chat_endpoint(request: ChatRequest):
                         if "candidates" in data and data["candidates"]:
                              answer = data["candidates"][0]["content"]["parts"][0]["text"]
                              return {"response": answer}
-                        else:
-                             print(f"LOG: Model {model} returned 200 but no candidates.")
-                             continue
                     
-                    if response.status_code == 404:
-                        print(f"LOG: Model {model} ({version}) not found (404). Trying next...")
-                        continue 
-                        
-                    # If other error (e.g. 400, 403), print and try next just in case
-                    print(f"LOG: Error with {model} ({version}): {response.status_code} - {response.text}")
-                    continue
+                    error_logs.append(f"{model}: {response.status_code}")
+                    print(f"LOG: Failed {model} ({version}) - {response.status_code}: {response.text}")
 
                 except Exception as e:
-                    print(f"LOG: Exception trying {model}: {e}")
+                    error_logs.append(f"{model}: Exception")
+                    print(f"LOG: Exception {model}: {e}")
                     continue
-
-            return {"response": "Error: Could not connect to any Gemini model (Flash, Pro, 1.0). Please verify your API Key has access to Gemini API."}
+            
+            # Return detailed error to help user debug Vercel vs Local
+            return {"response": f"Error: All Gemini models failed. Debug: {', '.join(error_logs)}. Key starts: {API_KEY[:4]}..."}
 
     except Exception as e:
         print(f"Server Error: {e}")
