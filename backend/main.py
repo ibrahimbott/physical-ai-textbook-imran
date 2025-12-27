@@ -74,37 +74,54 @@ async def chat_endpoint(request: ChatRequest):
             }
         }
         
-        # STRATEGY: "V1 Stable" Only.
-        # The 404/429 errors suggest v1beta is volatile for this key.
-        # We switch to the standard, production-ready 'v1' endpoint with 1.5 Flash.
+        # STRATEGY: Compatibility Mode.
+        # Status 400 (Bad Request) means the API didn't like 'systemInstruction' on the v1 endpoint.
+        # FIX: We merge the system prompt INTO the user message. This works on ALL versions (v1, v1beta).
         
-        target_model = "gemini-1.5-flash"
-        api_version = "v1" # NOT v1beta
+        # 1. Merge System Prompt into User Message
+        final_prompt = f"""{system_instruction}
         
-        url = f"https://generativelanguage.googleapis.com/{api_version}/models/{target_model}:generateContent?key={API_KEY}"
+        Context:
+        {context_text}
+        
+        Question:
+        {request.message}
+        """
+
+        # 2. Simplified Payload (No 'systemInstruction' field)
+        payload = {
+            "contents": [{
+                "role": "user",
+                "parts": [{"text": final_prompt}]
+            }]
+        }
         
         async with httpx.AsyncClient() as client:
+             # Try 1.5 Flash on v1beta (Standard)
+             # We went back to v1beta because 400 on v1 proves v1 was reached but rejected the payload.
+             # With the simplified payload, v1beta is the best bet for Flash.
+             url_flash = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
+             
              try:
-                response = await client.post(url, json=payload, timeout=30.0)
-                
+                response = await client.post(url_flash, json=payload, timeout=30.0)
                 if response.status_code == 200:
                     data = response.json()
                     if "candidates" in data and data["candidates"]:
                             answer = data["candidates"][0]["content"]["parts"][0]["text"]
                             return {"response": answer}
                 
-                # If 1.5 Flash fails, try Gemini Pro (Old Reliable) on v1
-                if response.status_code != 200:
-                    print(f"LOG: 1.5 Flash failed ({response.status_code}). Trying Gemini Pro...")
-                    url_pro = f"https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={API_KEY}"
-                    response_pro = await client.post(url_pro, json=payload, timeout=30.0)
-                    if response_pro.status_code == 200:
-                        data = response_pro.json()
-                        if "candidates" in data and data["candidates"]:
-                            answer = data["candidates"][0]["content"]["parts"][0]["text"]
-                            return {"response": answer}
+                # Fallback: Gemini Pro on v1 (The ultimate fallback)
+                print(f"LOG: Flash failed ({response.status_code}). Switching to Gemini Pro (v1)...")
+                url_pro = f"https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={API_KEY}"
+                response_pro = await client.post(url_pro, json=payload, timeout=30.0)
+                
+                if response_pro.status_code == 200:
+                    data = response_pro.json()
+                    if "candidates" in data and data["candidates"]:
+                        answer = data["candidates"][0]["content"]["parts"][0]["text"]
+                        return {"response": answer}
 
-                return {"response": f"Error: Failed to connect to Gemini 1.5 Flash (v1). Status: {response.status_code}. Key starts: {API_KEY[:4]}..."}
+                return {"response": f"Error: Flash and Pro failed. Flash Status: {response.status_code}. Pro Status: {response_pro.status_code}. Key: {API_KEY[:4]}..."}
              except Exception as e:
                 return {"response": f"Connection Error: {e}"}
 
