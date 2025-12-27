@@ -1,11 +1,5 @@
 {
     "version": 2,
-    "functions": {
-        "api/index.py": {
-            "maxDuration": 60,
-            "includeFiles": "frontend-book/docs/**/*"
-        }
-    },
     "rewrites": [
         {
             "source": "/api/chat",
@@ -24,17 +18,10 @@
             "destination": "/frontend-book/$1"
         }
     ],
-    "builds": [
-        {
-            "src": "frontend-book/package.json",
-            "use": "@vercel/static-build",
-            "config": {
-                "distDir": "build"
-            }
-        },
-        {
-            "src": "api/index.py",
-            "use": "@vercel/python"
+    "functions": {
+        "api/index.py": {
+            "maxDuration": 60,
+            "includeFiles": "frontend-book/docs/**/*"
         }
-    ]
+    }
 }
