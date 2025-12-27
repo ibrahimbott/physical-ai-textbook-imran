@@ -46,7 +46,8 @@ async def get_embedding(text: str):
     payload = {
         "model": "models/text-embedding-004",
         "content": {"parts": [{"text": text}]},
-        "outputDimensionality": 1024  # Request 1024 dimensions directly from model
+        "taskType": "RETRIEVAL_QUERY", # Required for proper retrieval embedding
+        "outputDimensionality": 1024   # Force 1024 dimensions (Works if taskType is set)
     }
     
     async with httpx.AsyncClient() as client:
@@ -56,7 +57,8 @@ async def get_embedding(text: str):
                 data = resp.json()
                 if "embedding" in data:
                     vector = data["embedding"]["values"]
-                    print(f"LOG: Generated Embedding Dim: {len(vector)}") # Debug to confirm API obeyed
+                    # Log actual dimension to verify fix
+                    print(f"LOG: Generated Embedding Dim: {len(vector)}") 
                     return vector
             
             print(f"LOG: Embedding Failed {resp.status_code}: {resp.text}")
