@@ -36,6 +36,7 @@ def health_check():
 
 @app.post("/api/chat")
 @app.post("/chat")
+@app.post("/") # Catch-all for stripped paths
 async def chat_endpoint(request: ChatRequest):
     if not API_KEY:
         return {"response": "Error: AI_API_KEY is missing in Vercel Environment Variables. Please add it in Settings."}
