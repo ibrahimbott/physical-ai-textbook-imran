@@ -74,18 +74,18 @@ async def chat_endpoint(request: ChatRequest):
             }
         }
         
-        # Models to try - prioritizing Flash as requested (mapping "2.5" request to actual available Flash models)
-        model_candidates = [
-            ("gemini-1.5-flash", "v1beta"),
-            ("gemini-1.5-flash-latest", "v1beta"),
-            ("gemini-2.0-flash-exp", "v1beta"), # 2.0 Flash Experimental
-            ("gemini-1.5-flash", "v1"),         # Stable v1
-        ]
-
+        # User strictly requested "gemini-2.5-flash"
+        # The actual model ID for the new Experimental Flash is "gemini-2.0-flash-exp"
+        # We target this exclusively as per request, with Rate Limit handling (429)
+        target_model = "gemini-2.0-flash-exp"
+        api_version = "v1beta"
+        
         async with httpx.AsyncClient() as client:
-            error_logs = []
-            for model, version in model_candidates:
-                url = f"https://generativelanguage.googleapis.com/{version}/models/{model}:generateContent?key={API_KEY}"
+            url = f"https://generativelanguage.googleapis.com/{api_version}/models/{target_model}:generateContent?key={API_KEY}"
+            
+            # Retry mechanism for 429 (Rate Limit) errors
+            import asyncio
+            for attempt in range(3): # Try 3 times
                 try:
                     response = await client.post(url, json=payload, timeout=30.0)
                     
@@ -95,16 +95,25 @@ async def chat_endpoint(request: ChatRequest):
                              answer = data["candidates"][0]["content"]["parts"][0]["text"]
                              return {"response": answer}
                     
-                    error_logs.append(f"{model}: {response.status_code}")
-                    print(f"LOG: Failed {model} ({version}) - {response.status_code}: {response.text}")
+                    if response.status_code == 429:
+                        print(f"LOG: 429 Rate Limit hit. Retrying in 2 seconds... (Attempt {attempt+1}/3)")
+                        await asyncio.sleep(2) # Backoff
+                        continue
+                        
+                    # If 404 or other error, break immediately (no point retrying)
+                    print(f"LOG: Error {response.status_code}: {response.text}")
+                    break
 
                 except Exception as e:
-                    error_logs.append(f"{model}: Exception")
-                    print(f"LOG: Exception {model}: {e}")
-                    continue
+                    print(f"LOG: Exception: {e}")
+                    break
             
-            # Return detailed error to help user debug Vercel vs Local
-            return {"response": f"Error: All Gemini models failed. Debug: {', '.join(error_logs)}. Key starts: {API_KEY[:4]}..."}
+            # Final failure message
+            return {"response": f"Error: Could not connect to {target_model} (User's '2.5 Flash'). Status: {response.status_code}. Rate limit hit?"}
+
+    except Exception as e:
+        print(f"Server Error: {e}")
+        return {"response": "Sorry, I encountered an internal error."}
 
     except Exception as e:
         print(f"Server Error: {e}")
