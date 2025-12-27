@@ -1,14 +1,10 @@
-# Core API Dependencies (Keep these for Vercel)
+python-dotenv
+langchain-text-splitters
+qdrant-client
+cohere
+google-generativeai
+openai
+langchain-community
 fastapi
 uvicorn
-python-dotenv
 httpx
-google-generativeai
-
-# RAG / AI Dependencies (Uncomment only if size allows or using Docker)
-# langchain-text-splitters
-# qdrant-client
-# cohere
-# google-generativeai
-# openai
-# langchain-community
