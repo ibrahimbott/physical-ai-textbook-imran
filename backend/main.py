@@ -74,36 +74,45 @@ async def chat_endpoint(request: ChatRequest):
             }
         }
         
-        # Models to try in order
-        models = [
-            "gemini-1.5-flash",
-            "gemini-1.5-flash-latest",
-            "gemini-pro"
+        # Models to try (Mix of v1beta and v1)
+        # Structure: (model_name, api_version)
+        model_candidates = [
+            ("gemini-1.5-flash", "v1beta"),
+            ("gemini-1.5-flash-latest", "v1beta"),
+            ("gemini-pro", "v1beta"),
+            ("gemini-pro", "v1"), # Stable v1 endpoint
+            ("gemini-1.0-pro", "v1beta")
         ]
 
         async with httpx.AsyncClient() as client:
-            for model in models:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={API_KEY}"
+            for model, version in model_candidates:
+                url = f"https://generativelanguage.googleapis.com/{version}/models/{model}:generateContent?key={API_KEY}"
                 try:
+                    # v1 endpoint uses 'contents' just like v1beta usually, but let's be safe
                     response = await client.post(url, json=payload, timeout=30.0)
                     
                     if response.status_code == 200:
                         data = response.json()
-                        answer = data["candidates"][0]["content"]["parts"][0]["text"]
-                        return {"response": answer}
+                        if "candidates" in data and data["candidates"]:
+                             answer = data["candidates"][0]["content"]["parts"][0]["text"]
+                             return {"response": answer}
+                        else:
+                             print(f"LOG: Model {model} returned 200 but no candidates.")
+                             continue
                     
                     if response.status_code == 404:
-                        print(f"LOG: Model {model} not found (404). Trying next...")
-                        continue # Try next model
+                        print(f"LOG: Model {model} ({version}) not found (404). Trying next...")
+                        continue 
                         
-                    # If other error, break
-                    return {"response": f"AI API Error ({model}): {response.text}"}
-
-                except Exception as e:
-                    print(f"LOG: Error trying {model}: {e}")
+                    # If other error (e.g. 400, 403), print and try next just in case
+                    print(f"LOG: Error with {model} ({version}): {response.status_code} - {response.text}")
                     continue
 
-            return {"response": "Error: specific AI models are not available for this API Key. Please check Google AI Studio."}
+                except Exception as e:
+                    print(f"LOG: Exception trying {model}: {e}")
+                    continue
+
+            return {"response": "Error: Could not connect to any Gemini model (Flash, Pro, 1.0). Please verify your API Key has access to Gemini API."}
 
     except Exception as e:
         print(f"Server Error: {e}")
