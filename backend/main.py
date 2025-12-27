@@ -45,7 +45,8 @@ async def get_embedding(text: str):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={API_KEY}"
     payload = {
         "model": "models/text-embedding-004",
-        "content": {"parts": [{"text": text}]}
+        "content": {"parts": [{"text": text}]},
+        "outputDimensionality": 1024  # Force 1024 dimensions for Qdrant compatibility
     }
     
     async with httpx.AsyncClient() as client:
@@ -53,10 +54,13 @@ async def get_embedding(text: str):
             resp = await client.post(url, json=payload, timeout=10.0)
             if resp.status_code == 200:
                 data = resp.json()
-                return data["embedding"]["values"]
-            else:
-                print(f"LOG: Embedding Failed {resp.status_code}: {resp.text}")
-                return None
+                if "embedding" in data:
+                    vector = data["embedding"]["values"]
+                    # print(f"LOG: Generated Embedding Dim: {len(vector)}") # Debug
+                    return vector
+            
+            print(f"LOG: Embedding Failed {resp.status_code}: {resp.text}")
+            return None
         except Exception as e:
             print(f"LOG: Embedding Error: {e}")
             return None
