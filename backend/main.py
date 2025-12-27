@@ -74,14 +74,14 @@ async def chat_endpoint(request: ChatRequest):
             }
         }
         
-        # Models to try (Mix of v1beta and v1)
+        # Models to try (Prioritizing User Request: Gemini 2.0 Flash)
         # Structure: (model_name, api_version)
         model_candidates = [
+            ("gemini-2.0-flash-exp", "v1beta"), # Latest Experimental
             ("gemini-1.5-flash", "v1beta"),
             ("gemini-1.5-flash-latest", "v1beta"),
             ("gemini-pro", "v1beta"),
             ("gemini-pro", "v1"), # Stable v1 endpoint
-            ("gemini-1.0-pro", "v1beta")
         ]
 
         async with httpx.AsyncClient() as client:
