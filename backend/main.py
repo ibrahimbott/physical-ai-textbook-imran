@@ -1,5 +1,6 @@
 import os
 import httpx
+import asyncio
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -10,7 +11,7 @@ load_dotenv()
 
 app = FastAPI()
 
-# Allow CORS
+# Allow CORS for Frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,18 +20,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configuration
+# --- Configuration ---
 API_KEY = os.getenv("AI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
-COLLECTION_NAME = os.getenv("COLLECTION_NAME", "physical_ai_textbook") # Default if not set
+COLLECTION_NAME = os.getenv("COLLECTION_NAME", "physical_ai_textbook")
 
-# Initialize Qdrant Client (Lazy loading to allow startup even if keys missing initially)
+# Initialize Qdrant Client
 qdrant_client = None
 if QDRANT_URL and QDRANT_API_KEY:
     try:
         qdrant_client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
-        print("LOG: Qdrant Client Initialized.")
+        print("LOG: Qdrant Client Initialized Successfully.")
     except Exception as e:
         print(f"LOG: Qdrant Init Failed: {e}")
 
@@ -38,225 +39,120 @@ class ChatRequest(BaseModel):
     message: str
 
 async def get_embedding(text: str):
-    """Generates embedding using Gemini Text Embedding 004 via HTTPX"""
+    """Generates NATIVE 1024-dimension embedding using Gemini 004"""
     if not API_KEY:
         return None
     
     url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={API_KEY}"
+    
+    # CRITICAL FIX: Explicitly request 1024 dimensionality from Google API
     payload = {
         "model": "models/text-embedding-004",
         "content": {"parts": [{"text": text}]},
-        "taskType": "RETRIEVAL_QUERY", # Required for proper retrieval embedding
-        "outputDimensionality": 1024   # Request 1024 (API ignores this for expansion)
+        "taskType": "RETRIEVAL_QUERY",
+        "outputDimensionality": 1024 
     }
     
     async with httpx.AsyncClient() as client:
         try:
-            resp = await client.post(url, json=payload, timeout=10.0)
+            resp = await client.post(url, json=payload, timeout=15.0)
             if resp.status_code == 200:
                 data = resp.json()
-                if "embedding" in data:
-                    vector = data["embedding"]["values"]
-                    
-                    # MANDATORY FIX: Pad to 1024
-                    # The API returns 768 even when 1024 is requested (it cannot upscale).
-                    # Qdrant throws 400 if we don't match the 1024 schema.
-                    current_dim = len(vector)
-                    target_dim = 1024
-                    
-                    if current_dim < target_dim:
-                        print(f"LOG: API returned {current_dim}. Padding to {target_dim} to prevent Crash.")
-                        vector += [0.0] * (target_dim - current_dim)
-                        
-                    return vector
-            
-            print(f"LOG: Embedding Failed {resp.status_code}: {resp.text}")
-            return None
+                vector = data["embedding"]["values"]
+                print(f"LOG: Successfully generated NATIVE {len(vector)} dim embedding.")
+                return vector
+            else:
+                print(f"LOG: Embedding API Error {resp.status_code}: {resp.text}")
+                return None
         except Exception as e:
-            print(f"LOG: Embedding Error: {e}")
+            print(f"LOG: Embedding Exception: {e}")
             return None
 
 def search_qdrant(query_embedding, top_k=3):
-    """Searches Qdrant for similar chunks using correct method"""
+    """Searches Qdrant with the 1024-dim vector"""
     if not qdrant_client or not query_embedding:
         return []
     
     try:
-        # 1. Verify Collection Exists
-        collections = qdrant_client.get_collections()
-        exists = any(c.name == COLLECTION_NAME for c in collections.collections)
-        if not exists:
-            print(f"LOG: Collection '{COLLECTION_NAME}' not found in Qdrant.")
-            return []
+        # Verify dimension match
+        if len(query_embedding) != 1024:
+            print(f"LOG WARNING: Vector dimension is {len(query_embedding)}, but Qdrant expects 1024.")
 
-        # 2. Execute Search using query_points (Modern Method)
-        try:
-            results = qdrant_client.query_points(
-                collection_name=COLLECTION_NAME,
-                query=query_embedding,
-                limit=top_k
-            ).points
-        except AttributeError:
-             print("LOG: 'query_points' method missing. Trying .search()...")
-             # Fallback for older clients
-             try:
-                results = qdrant_client.search(
-                    collection_name=COLLECTION_NAME,
-                    query_vector=query_embedding,
-                    limit=top_k
-                )
-             except AttributeError:
-                return ["Search Error: Client version mismatch. Neither 'query_points' nor 'search' found."]
-
-        # Extract textual content from payload
+        # Using query_points for modern Qdrant Client
+        response = qdrant_client.query_points(
+            collection_name=COLLECTION_NAME,
+            query=query_embedding,
+            limit=top_k
+        )
+        
         extracted_chunks = []
-        for res in results:
-            if hasattr(res, 'payload') and res.payload:
-                content = res.payload.get("page_content", "") or res.payload.get("text", "")
+        for point in response.points:
+            payload = point.payload
+            if payload:
+                # Try common content keys
+                content = payload.get("page_content") or payload.get("text") or payload.get("content")
                 if content:
                     extracted_chunks.append(content)
         
         return extracted_chunks
 
     except Exception as e:
-        print(f"LOG: Search Error: {e}")
-        return [f"Search Error: {str(e)}"]
-
-@app.get("/api/health")
-def health_check():
-    q_status = False
-    try:
-        if qdrant_client:
-            q_status = True
-    except:
-        pass
-        
-    return {
-        "status": "ok",
-        "backend": "FastAPI + Qdrant Fixed",
-        "qdrant_connected": q_status,
-        "key_present": bool(API_KEY)
-    }
+        print(f"LOG: Qdrant Search Error: {e}")
+        return []
 
 @app.post("/api/chat")
-@app.post("/chat")
-@app.post("/") 
 async def chat_endpoint(request: ChatRequest):
     if not API_KEY:
-        return {"response": "Error: API Key missing. Please set 'AI_API_KEY' in Vercel."}
+        return {"response": "System Error: API Key missing in Vercel."}
     
-    # 1. Generate Embedding & Search Qdrant
+    user_msg = request.message.strip()
+
+    # 1. Search Database
     context_text = ""
-    query_embedding = await get_embedding(request.message)
+    query_vector = await get_embedding(user_msg)
     
-    if query_embedding:
-        chunks = search_qdrant(query_embedding)
-        # Check if chunks contain error message
-        if chunks and chunks[0].startswith("Search Error:"):
-             return {"response": chunks[0]}
-             
+    if query_vector:
+        chunks = search_qdrant(query_vector)
         if chunks:
             context_text = "\n\n".join(chunks)
-            print(f"LOG: Retrieved {len(chunks)} chunks from Qdrant.")
+            print(f"LOG: Context found ({len(chunks)} chunks).")
         else:
-            print("LOG: No chunks found in Qdrant (or search failed).")
-    else:
-        print("LOG: Embedding generation failed. Context will be empty.")
+            print("LOG: No matching textbook data found.")
 
-    # 1.5. Log Collection Name (Debug)
-    print(f"LOG: Querying Collection: {COLLECTION_NAME}")
-
-    # 2. Smart Context System Prompt (Relaxed for Greetings)
-    system_instruction = (
-        "You are an AI Tutor for the 'Physical AI & Humanoid Robotics' textbook. "
-        "1. **Greetings**: If the user says 'Hi', 'Hello', or 'Thanks', reply politely and ask how you can help with the textbook. "
-        "2. **Strict Context**: For technical questions, answer ONLY based on the provided Context below. "
-        "3. **Missing Info**: If the answer is NOT in the context, say 'I couldn't find that specific topic in the textbook. Could you rephrase or ask about [Topic]?' "
-        "4. **Tone**: Be helpful, professional, and encouraging."
+    # 2. Strict Instructions
+    system_prompt = (
+        "You are a professional AI Tutor for the 'Physical AI & Humanoid Robotics' textbook. "
+        "Rules:\n"
+        "1. If the user greets you (Hi, Hello, Salam), reply with a very short polite greeting and ask about the textbook.\n"
+        "2. For technical questions, use ONLY the provided Context from the textbook. Do not use outside knowledge.\n"
+        "3. If the answer is not in the context, say: 'I'm sorry, this specific topic is not covered in our textbook.'\n"
+        "4. If the user asks to 'explain' or 'detail', then provide a long and clear explanation. Otherwise, keep it concise."
     )
     
-    final_prompt = f"""{system_instruction}
-    
-    Context from Textbook:
-    {context_text}
-    
-    User Question:
-    {request.message}
-    """
+    final_input = f"{system_prompt}\n\nContext:\n{context_text}\n\nUser Question: {user_msg}"
 
-    # 3. Dynamic Model Discovery (Vercel Fix)
+    # 3. Model Discovery & Fallback
+    models_to_try = ["gemini-robotics-er-1.5-preview", "gemini-1.5-flash", "gemini-2.0-flash-exp"]
+    
     async with httpx.AsyncClient() as client:
-        available_models = []
-        try:
-            # Ask Google what's allowed
-            discovery_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={API_KEY}"
-            resp = await client.get(discovery_url, timeout=5.0)
-            if resp.status_code == 200:
-                data = resp.json()
-                if "models" in data:
-                    available_models = [
-                        m["name"].replace("models/", "") 
-                        for m in data["models"] 
-                        if "generateContent" in m.get("supportedGenerationMethods", [])
-                    ]
-                    # Sort: Preferred User Model -> 2.0 -> 1.5 -> Flash
-                    # Note: "gemini-robotics-er-1.5-preview" is hypothetical but we prioritize it if found
-                    available_models.sort(key=lambda x: (
-                        "robotics" not in x, # Highest priority
-                        "2.0" not in x, 
-                        "1.5" not in x, 
-                        "flash" not in x
-                    ))
-        except Exception as e:
-            print(f"LOG: Discovery Error: {e}")
-
-        # Fallback List
-        # Added user's specific working model to the list
-        if not available_models:
-             available_models = [
-                 "gemini-robotics-er-1.5-preview", # User said this works 200 OK
-                 "gemini-2.0-flash-exp", 
-                 "gemini-1.5-flash", 
-                 "gemini-1.5-flash-8b", 
-                 "gemini-pro"
-             ]
-        else:
-            # Force inject user's preferred model at top if discovery didn't find it (but it might work)
-             if "gemini-robotics-er-1.5-preview" not in available_models:
-                  available_models.insert(0, "gemini-robotics-er-1.5-preview")
-
-        # Try models in order
-        payload = {
-            "contents": [{"role": "user", "parts": [{"text": final_prompt}]}]
-        }
-        
-        logs = []
-        for model in available_models:
+        for model in models_to_try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={API_KEY}"
+            payload = {"contents": [{"parts": [{"text": final_input}]}]}
             
-            # Simple retry logic
-            for attempt in range(2): 
-                try:
-                    response = await client.post(url, json=payload, timeout=30.0)
-                    if response.status_code == 200:
-                        data = response.json()
-                        if "candidates" in data and data["candidates"]:
-                             return {"response": data["candidates"][0]["content"]["parts"][0]["text"]}
-                    
-                    if response.status_code == 429:
-                        import asyncio
-                        await asyncio.sleep(1.5)
-                        continue # Retry same model
-                    
-                    if response.status_code == 404:
-                         break # Skip to next model
-                    
-                except Exception as e:
-                    logs.append(f"{model}: Error {e}")
-                    break
-        
-        return {"response": "Error: critical system failure. Unable to connect to any AI models or Database. Please check Vercel Logs."}
+            try:
+                resp = await client.post(url, json=payload, timeout=30.0)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return {"response": data["candidates"][0]["content"]["parts"][0]["text"]}
+                elif resp.status_code == 429:
+                    print(f"LOG: {model} busy (429), trying next...")
+                    continue
+            except Exception as e:
+                print(f"LOG: Error with {model}: {e}")
+                continue
+
+    return {"response": "I'm having trouble connecting to my brain right now. Please try again in a moment."}
 
 @app.get("/")
-def read_root():
-    return {"message": "Physical AI Textbook Backend (Qdrant Enabled)"}
+def home():
+    return {"status": "Physical AI Backend Active", "database": COLLECTION_NAME}
