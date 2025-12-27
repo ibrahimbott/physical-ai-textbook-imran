@@ -1,10 +1,13 @@
-python-dotenv
-langchain-text-splitters
-qdrant-client
-cohere
-google-generativeai
-openai
-langchain-community
+# Core API Dependencies (Extreme Lightweight)
 fastapi
 uvicorn
+python-dotenv
 httpx
+
+# RAG / AI Dependencies (Uncomment only if size allows or using Docker)
+# langchain-text-splitters
+# qdrant-client
+# cohere
+# google-generativeai
+# openai
+# langchain-community

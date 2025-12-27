@@ -1,5 +1,5 @@
 import os
-import google.generativeai as genai
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -19,13 +19,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configure Gemini
-API_KEY = os.getenv("AI_API_KEY") # User to set this in Vercel
-if API_KEY:
-    genai.configure(api_key=API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash') # Lightweight model
-else:
-    model = None
+# Configuration
+API_KEY = os.getenv("AI_API_KEY")
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
 
 class ChatRequest(BaseModel):
     message: str
@@ -34,16 +30,15 @@ class ChatRequest(BaseModel):
 def health_check():
     return {
         "status": "ok",
-        "backend": "FastAPI",
-        "ai_status": "Ready" if model else "Missing API Key"
+        "backend": "FastAPI (Lightweight)",
+        "key_present": bool(API_KEY)
     }
 
 @app.post("/api/chat")
-@app.post("/chat") # Handle cases where Vercel strips /api prefix
+@app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
-    if not model:
-        # Fallback if key missing
-        return {"response": "Error: AI_API_KEY is missing in Vercel Environment Variables."}
+    if not API_KEY:
+        return {"response": "Error: AI_API_KEY is missing in Vercel Environment Variables. Please add it in Settings."}
 
     try:
         # 1. Search Textbook
@@ -51,25 +46,45 @@ async def chat_endpoint(request: ChatRequest):
         context_text = "\n\n".join([c["content"] for c in context_chunks])
         
         # 2. Construct Prompt
-        prompt = f"""
-        You are an AI Tutor for the "Physical AI & Humanoid Robotics" textbook.
-        Answer the student's question based ONLY on the following textbook context.
-        If the answer is not in the context, say "I don't have that information in the notes."
-        
-        CONTEXT:
+        system_instruction = "You are an AI Tutor for the 'Physical AI & Humanoid Robotics' textbook. Answer based ONLY on the context."
+        full_prompt = f"""
+        Context:
         {context_text}
         
-        STUDENT QUESTION:
+        Question:
         {request.message}
         """
+
+        # 3. Call Gemini API via HTTPX (No heavy SDK)
+        payload = {
+            "contents": [{
+                "role": "user",
+                "parts": [{"text": full_prompt}]
+            }],
+            "systemInstruction": {
+                "role": "user", 
+                "parts": [{"text": system_instruction}]
+            }
+        }
         
-        # 3. Generate Answer
-        response = model.generate_content(prompt)
-        return {"response": response.text}
+        async with httpx.AsyncClient() as client:
+            response = await client.post(GEMINI_URL, json=payload, timeout=30.0)
+            
+            if response.status_code != 200:
+                return {"response": f"AI API Error: {response.text}"}
+                
+            data = response.json()
+            # Extract text from Gemini response structure
+            try:
+                answer = data["candidates"][0]["content"]["parts"][0]["text"]
+                return {"response": answer}
+            except (KeyError, IndexError):
+                return {"response": "Error: Unexpected response format from AI."}
         
     except Exception as e:
-        return {"response": f"AI Error: {str(e)}"}
+        print(f"Server Error: {e}")
+        return {"response": "Sorry, I encountered an internal error."}
 
 @app.get("/")
 def read_root():
-    return {"message": "Physical AI Textbook Backend Active"}
+    return {"message": "Physical AI Textbook Backend (Lightweight Only)"}
