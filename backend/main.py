@@ -47,7 +47,7 @@ async def get_embedding(text: str):
         "model": "models/text-embedding-004",
         "content": {"parts": [{"text": text}]},
         "taskType": "RETRIEVAL_QUERY", # Required for proper retrieval embedding
-        "outputDimensionality": 1024   # Force 1024 dimensions (Works if taskType is set)
+        "outputDimensionality": 1024   # Request 1024 (API ignores this for expansion)
     }
     
     async with httpx.AsyncClient() as client:
@@ -57,8 +57,17 @@ async def get_embedding(text: str):
                 data = resp.json()
                 if "embedding" in data:
                     vector = data["embedding"]["values"]
-                    # Log actual dimension to verify fix
-                    print(f"LOG: Generated Embedding Dim: {len(vector)}") 
+                    
+                    # MANDATORY FIX: Pad to 1024
+                    # The API returns 768 even when 1024 is requested (it cannot upscale).
+                    # Qdrant throws 400 if we don't match the 1024 schema.
+                    current_dim = len(vector)
+                    target_dim = 1024
+                    
+                    if current_dim < target_dim:
+                        print(f"LOG: API returned {current_dim}. Padding to {target_dim} to prevent Crash.")
+                        vector += [0.0] * (target_dim - current_dim)
+                        
                     return vector
             
             print(f"LOG: Embedding Failed {resp.status_code}: {resp.text}")
