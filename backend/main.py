@@ -53,7 +53,7 @@ async def chat_endpoint(request: ChatRequest):
         context_text = "\n\n".join([c["content"] for c in context_chunks])
         
         # 2. Construct Prompt
-        system_instruction = "You are an AI Tutor for the 'Physical AI & Humanoid Robotics' textbook. Answer based ONLY on the context."
+        system_instruction = "You are an AI Tutor for the 'Physical AI & Humanoid Robotics' textbook. Answer based ONLY on the context. If context is empty, say you don't know."
         full_prompt = f"""
         Context:
         {context_text}
@@ -62,7 +62,7 @@ async def chat_endpoint(request: ChatRequest):
         {request.message}
         """
 
-        # 3. Call Gemini API via HTTPX (No heavy SDK)
+        # 3. Call Gemini API via HTTPX (With Fallback)
         payload = {
             "contents": [{
                 "role": "user",
@@ -74,20 +74,37 @@ async def chat_endpoint(request: ChatRequest):
             }
         }
         
+        # Models to try in order
+        models = [
+            "gemini-1.5-flash",
+            "gemini-1.5-flash-latest",
+            "gemini-pro"
+        ]
+
         async with httpx.AsyncClient() as client:
-            response = await client.post(GEMINI_URL, json=payload, timeout=30.0)
-            
-            if response.status_code != 200:
-                return {"response": f"AI API Error: {response.text}"}
-                
-            data = response.json()
-            # Extract text from Gemini response structure
-            try:
-                answer = data["candidates"][0]["content"]["parts"][0]["text"]
-                return {"response": answer}
-            except (KeyError, IndexError):
-                return {"response": "Error: Unexpected response format from AI."}
-        
+            for model in models:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={API_KEY}"
+                try:
+                    response = await client.post(url, json=payload, timeout=30.0)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        answer = data["candidates"][0]["content"]["parts"][0]["text"]
+                        return {"response": answer}
+                    
+                    if response.status_code == 404:
+                        print(f"LOG: Model {model} not found (404). Trying next...")
+                        continue # Try next model
+                        
+                    # If other error, break
+                    return {"response": f"AI API Error ({model}): {response.text}"}
+
+                except Exception as e:
+                    print(f"LOG: Error trying {model}: {e}")
+                    continue
+
+            return {"response": "Error: specific AI models are not available for this API Key. Please check Google AI Studio."}
+
     except Exception as e:
         print(f"Server Error: {e}")
         return {"response": "Sorry, I encountered an internal error."}
