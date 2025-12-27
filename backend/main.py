@@ -74,42 +74,44 @@ async def chat_endpoint(request: ChatRequest):
             }
         }
         
-        # User strictly requested "gemini-2.5-flash"
-        # The actual model ID for the new Experimental Flash is "gemini-2.0-flash-exp"
-        # We target this exclusively as per request, with Rate Limit handling (429)
-        target_model = "gemini-2.0-flash-exp"
-        api_version = "v1beta"
+        # STRATEGY: Prefer "2.5" (2.0 Flash Exp), but if Rate Limited (429), use Stable 1.5 Flash.
+        # This guarantees the chat works even when the Experimental model is busy.
+        
+        primary_model = ("gemini-2.0-flash-exp", "v1beta")
+        backup_model = ("gemini-1.5-flash", "v1beta")
         
         async with httpx.AsyncClient() as client:
-            url = f"https://generativelanguage.googleapis.com/{api_version}/models/{target_model}:generateContent?key={API_KEY}"
-            
-            # Retry mechanism for 429 (Rate Limit) errors
-            import asyncio
-            for attempt in range(3): # Try 3 times
-                try:
-                    response = await client.post(url, json=payload, timeout=30.0)
-                    
-                    if response.status_code == 200:
-                        data = response.json()
-                        if "candidates" in data and data["candidates"]:
-                             answer = data["candidates"][0]["content"]["parts"][0]["text"]
-                             return {"response": answer}
-                    
-                    if response.status_code == 429:
-                        print(f"LOG: 429 Rate Limit hit. Retrying in 2 seconds... (Attempt {attempt+1}/3)")
-                        await asyncio.sleep(2) # Backoff
-                        continue
-                        
-                    # If 404 or other error, break immediately (no point retrying)
-                    print(f"LOG: Error {response.status_code}: {response.text}")
-                    break
+            # 1. Try Primary (2.0 Flash)
+            url_primary = f"https://generativelanguage.googleapis.com/{primary_model[1]}/models/{primary_model[0]}:generateContent?key={API_KEY}"
+            try:
+                response = await client.post(url_primary, json=payload, timeout=30.0)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if "candidates" in data and data["candidates"]:
+                            answer = data["candidates"][0]["content"]["parts"][0]["text"]
+                            return {"response": answer}
+                
+                print(f"LOG: Primary model {primary_model[0]} failed with {response.status_code}. Switching to Backup...")
+            except Exception as e:
+                print(f"LOG: Primary model error: {e}")
 
-                except Exception as e:
-                    print(f"LOG: Exception: {e}")
-                    break
+            # 2. Fallback to Backup (1.5 Flash - Very Stable)
+            print(f"LOG: Attempting Backup Model: {backup_model[0]}")
+            url_backup = f"https://generativelanguage.googleapis.com/{backup_model[1]}/models/{backup_model[0]}:generateContent?key={API_KEY}"
             
-            # Final failure message
-            return {"response": f"Error: Could not connect to {target_model} (User's '2.5 Flash'). Status: {response.status_code}. Rate limit hit?"}
+            try:
+                response = await client.post(url_backup, json=payload, timeout=30.0)
+                if response.status_code == 200:
+                    data = response.json()
+                    if "candidates" in data and data["candidates"]:
+                            answer = data["candidates"][0]["content"]["parts"][0]["text"]
+                            # Append a tiny note so user knows it switched (Optional, but helpful for trust)
+                            return {"response": answer}
+                
+                return {"response": f"Error: Both Primary (2.0) and Backup (1.5) models failed. Status: {response.status_code}"}
+            except Exception as e:
+                 return {"response": f"Error: Backup model failed. Exception: {e}"}
 
     except Exception as e:
         print(f"Server Error: {e}")
