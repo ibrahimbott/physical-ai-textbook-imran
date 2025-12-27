@@ -62,28 +62,54 @@ async def get_embedding(text: str):
             return None
 
 def search_qdrant(query_embedding, top_k=3):
-    """Searches Qdrant for similar chunks"""
+    """Searches Qdrant for similar chunks using correct method"""
     if not qdrant_client or not query_embedding:
         return []
     
     try:
-        results = qdrant_client.search(
-            collection_name=COLLECTION_NAME,
-            query_vector=query_embedding,
-            limit=top_k
-        )
-        # Extract payload (assuming payload has 'page_content' or similar field)
+        # 1. Verify Collection Exists
+        collections = qdrant_client.get_collections()
+        exists = any(c.name == COLLECTION_NAME for c in collections.collections)
+        if not exists:
+            print(f"LOG: Collection '{COLLECTION_NAME}' not found in Qdrant.")
+            return []
+
+        # 2. Execute Search (Try 'query_points' then 'search')
+        # User requested 'query_points' specifically due to attribute error
+        try:
+            results = qdrant_client.query_points(
+                collection_name=COLLECTION_NAME,
+                query=query_embedding,
+                limit=top_k
+            ).points
+        except AttributeError:
+             # Fallback to .search() if query_points fails (older client)
+             results = qdrant_client.search(
+                collection_name=COLLECTION_NAME,
+                query_vector=query_embedding,
+                limit=top_k
+            )
+
+        # Extract textual content from payload
         return [res.payload.get("page_content", "") for res in results if res.payload]
+
     except Exception as e:
-        print(f"LOG: Qdrant Search Error: {e}")
-        return []
+        print(f"LOG: Search Error: {e}")
+        return [f"Search Error: {str(e)}"]
 
 @app.get("/api/health")
 def health_check():
+    q_status = False
+    try:
+        if qdrant_client:
+            q_status = True
+    except:
+        pass
+        
     return {
         "status": "ok",
-        "backend": "FastAPI + Qdrant",
-        "qdrant_connected": bool(qdrant_client),
+        "backend": "FastAPI + Qdrant Fixed",
+        "qdrant_connected": q_status,
         "key_present": bool(API_KEY)
     }
 
@@ -100,6 +126,10 @@ async def chat_endpoint(request: ChatRequest):
     
     if query_embedding:
         chunks = search_qdrant(query_embedding)
+        # Check if chunks contain error message
+        if chunks and chunks[0].startswith("Search Error:"):
+             return {"response": chunks[0]}
+             
         if chunks:
             context_text = "\n\n".join(chunks)
             print(f"LOG: Retrieved {len(chunks)} chunks from Qdrant.")
@@ -144,14 +174,31 @@ async def chat_endpoint(request: ChatRequest):
                         for m in data["models"] 
                         if "generateContent" in m.get("supportedGenerationMethods", [])
                     ]
-                    # Sort: 2.0 -> 1.5 -> Flash
-                    available_models.sort(key=lambda x: ("2.0" not in x, "1.5" not in x, "flash" not in x))
+                    # Sort: Preferred User Model -> 2.0 -> 1.5 -> Flash
+                    # Note: "gemini-robotics-er-1.5-preview" is hypothetical but we prioritize it if found
+                    available_models.sort(key=lambda x: (
+                        "robotics" not in x, # Highest priority
+                        "2.0" not in x, 
+                        "1.5" not in x, 
+                        "flash" not in x
+                    ))
         except Exception as e:
             print(f"LOG: Discovery Error: {e}")
 
         # Fallback List
+        # Added user's specific working model to the list
         if not available_models:
-             available_models = ["gemini-2.0-flash-exp", "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-pro"]
+             available_models = [
+                 "gemini-robotics-er-1.5-preview", # User said this works 200 OK
+                 "gemini-2.0-flash-exp", 
+                 "gemini-1.5-flash", 
+                 "gemini-1.5-flash-8b", 
+                 "gemini-pro"
+             ]
+        else:
+            # Force inject user's preferred model at top if discovery didn't find it (but it might work)
+             if "gemini-robotics-er-1.5-preview" not in available_models:
+                  available_models.insert(0, "gemini-robotics-er-1.5-preview")
 
         # Try models in order
         payload = {
